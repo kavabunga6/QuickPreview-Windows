@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 — 2026-08-15
+
+- Ensure the preview window is brought to the foreground when opened from File Explorer.
+- Return the preview to the normal window layer immediately, so it does not remain always on top.
+
 ## 1.0.0 — 2026-08-15
 
 - Quick Look-style preview from File Explorer with the Space key.

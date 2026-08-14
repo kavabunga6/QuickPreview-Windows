@@ -1,5 +1,5 @@
 #define MyAppName "QuickPreview"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "QuickPreview"
 #define MyAppExeName "QuickPreview.exe"
 

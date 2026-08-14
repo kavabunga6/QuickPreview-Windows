@@ -16,6 +16,13 @@ namespace QuickPreview;
 
 public partial class MainWindow : Window
 {
+    private static readonly IntPtr HwndTopmost = new(-1);
+    private static readonly IntPtr HwndNotTopmost = new(-2);
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpShowWindow = 0x0040;
+    private const int SwRestore = 9;
+
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".ico", ".wdp", ".webp"
@@ -83,11 +90,7 @@ public partial class MainWindow : Window
         PopulateHeader(path);
         SetDefaultWindowSize();
 
-        if (!IsVisible)
-            Show();
-
-        Activate();
-        Focus();
+        BringPreviewToFront();
 
         try
         {
@@ -113,6 +116,33 @@ public partial class MainWindow : Window
 
         if (!string.IsNullOrWhiteSpace(pathToSelect))
             _ = ExplorerSelectionService.TrySelectPathInOriginWindow(pathToSelect);
+    }
+
+    private void BringPreviewToFront()
+    {
+        if (!IsVisible)
+            Show();
+
+        if (WindowState == WindowState.Minimized)
+            WindowState = WindowState.Normal;
+
+        var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero)
+            return;
+
+        _ = ShowWindow(handle, SwRestore);
+
+        // A background tray process is not always allowed to activate itself. Moving the
+        // preview through the topmost band makes it visible, then immediately returns it
+        // to the normal window band so it does not stay above every other application.
+        _ = SetWindowPos(handle, HwndTopmost, 0, 0, 0, 0,
+            SwpNoMove | SwpNoSize | SwpShowWindow);
+        _ = SetWindowPos(handle, HwndNotTopmost, 0, 0, 0, 0,
+            SwpNoMove | SwpNoSize | SwpShowWindow);
+        _ = BringWindowToTop(handle);
+        _ = SetForegroundWindow(handle);
+        Activate();
+        Focus();
     }
 
     private async Task LoadPreviewAsync(string path)
@@ -891,4 +921,27 @@ public partial class MainWindow : Window
 
     [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
     private static extern int StrCmpLogicalW(string first, string second);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool BringWindowToTop(IntPtr window);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ShowWindow(IntPtr window, int command);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(
+        IntPtr window,
+        IntPtr insertAfter,
+        int x,
+        int y,
+        int width,
+        int height,
+        uint flags);
 }
