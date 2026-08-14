@@ -52,6 +52,10 @@ public partial class MainWindow : Window
         ".sql", ".graphql", ".vue", ".svelte", ".dockerfile", ".gitignore", ".gitattributes",
         ".srt", ".vtt", ".ass", ".rtf"
     };
+    private static readonly double[] ImageZoomSteps =
+    {
+        0.05, 0.10, 0.125, 0.25, 0.33, 0.50, 0.67, 0.75, 1.0, 1.25, 1.50, 2.0, 3.0, 4.0, 6.0, 8.0
+    };
 
     private readonly DispatcherTimer _mediaTimer;
     private readonly MediaPlayer _audioPlayer = new();
@@ -69,6 +73,10 @@ public partial class MainWindow : Window
     private bool _updatingVolumeControls;
     private bool _pdfWebViewConfigured;
     private double _volume = 0.8;
+    private double _imageNaturalWidth;
+    private double _imageNaturalHeight;
+    private double _imageZoom = 1;
+    private bool _imageFitMode = true;
 
     public MainWindow()
     {
@@ -212,6 +220,7 @@ public partial class MainWindow : Window
         FitWindowToImage(bitmap);
         ShowOnly(ImageView);
         FileMetaText.Text = $"{bitmap.PixelWidth} × {bitmap.PixelHeight}  •  {FormatFileSize(new FileInfo(path).Length)}";
+        Dispatcher.BeginInvoke(new Action(FitImageToViewport), DispatcherPriority.Loaded);
     }
 
     private async Task LoadAudioAsync(string path)
@@ -603,6 +612,15 @@ public partial class MainWindow : Window
         PreviewImage.Source = null;
         PreviewImage.MaxWidth = double.PositiveInfinity;
         PreviewImage.MaxHeight = double.PositiveInfinity;
+        PreviewImage.Width = double.NaN;
+        PreviewImage.Height = double.NaN;
+        _imageNaturalWidth = 0;
+        _imageNaturalHeight = 0;
+        _imageZoom = 1;
+        _imageFitMode = true;
+        ImageZoomText.Text = "100%";
+        ImageScrollViewer.ScrollToHorizontalOffset(0);
+        ImageScrollViewer.ScrollToVerticalOffset(0);
         PreviewText.Clear();
         if (PdfWebView.CoreWebView2 is not null)
             PdfWebView.CoreWebView2.Navigate("about:blank");
@@ -669,19 +687,93 @@ public partial class MainWindow : Window
     {
         var area = SystemParameters.WorkArea;
         var dpi = VisualTreeHelper.GetDpi(this);
-        var naturalWidth = bitmap.PixelWidth / Math.Max(dpi.DpiScaleX, 1);
-        var naturalHeight = bitmap.PixelHeight / Math.Max(dpi.DpiScaleY, 1);
+        _imageNaturalWidth = bitmap.PixelWidth / Math.Max(dpi.DpiScaleX, 1);
+        _imageNaturalHeight = bitmap.PixelHeight / Math.Max(dpi.DpiScaleY, 1);
         var maxContentWidth = area.Width * 0.9;
         var maxContentHeight = Math.Max(180, area.Height * 0.9 - 108);
-        var scale = Math.Min(1, Math.Min(maxContentWidth / naturalWidth, maxContentHeight / naturalHeight));
-        var contentWidth = naturalWidth * scale;
-        var contentHeight = naturalHeight * scale;
+        _imageZoom = Math.Min(1, Math.Min(maxContentWidth / _imageNaturalWidth, maxContentHeight / _imageNaturalHeight));
+        _imageFitMode = true;
+        var contentWidth = _imageNaturalWidth * _imageZoom;
+        var contentHeight = _imageNaturalHeight * _imageZoom;
 
-        PreviewImage.MaxWidth = naturalWidth;
-        PreviewImage.MaxHeight = naturalHeight;
+        ApplyImageZoom();
         Width = Math.Max(MinWidth, Math.Min(area.Width * 0.94, contentWidth + 36));
         Height = Math.Max(MinHeight, Math.Min(area.Height * 0.94, contentHeight + 108));
         CenterInWorkArea(area);
+    }
+
+    private void FitImageToViewport()
+    {
+        if (_imageNaturalWidth <= 0 || _imageNaturalHeight <= 0 || ImageView.Visibility != Visibility.Visible)
+            return;
+
+        var availableWidth = Math.Max(1, ImageScrollViewer.ViewportWidth - 44);
+        var availableHeight = Math.Max(1, ImageScrollViewer.ViewportHeight - 108);
+        _imageZoom = Math.Min(1, Math.Min(availableWidth / _imageNaturalWidth, availableHeight / _imageNaturalHeight));
+        _imageFitMode = true;
+        ApplyImageZoom();
+        ImageScrollViewer.ScrollToHorizontalOffset(0);
+        ImageScrollViewer.ScrollToVerticalOffset(0);
+    }
+
+    private void ApplyImageZoom()
+    {
+        if (_imageNaturalWidth <= 0 || _imageNaturalHeight <= 0)
+            return;
+
+        PreviewImage.Width = Math.Max(1, _imageNaturalWidth * _imageZoom);
+        PreviewImage.Height = Math.Max(1, _imageNaturalHeight * _imageZoom);
+        ImageZoomText.Text = $"{Math.Round(_imageZoom * 100):0}%";
+        RenderOptions.SetBitmapScalingMode(PreviewImage, BitmapScalingMode.HighQuality);
+    }
+
+    private void SetImageZoom(double zoom, System.Windows.Point? viewportAnchor = null)
+    {
+        if (_imageNaturalWidth <= 0 || _imageNaturalHeight <= 0)
+            return;
+
+        var previousZoom = _imageZoom;
+        var anchor = viewportAnchor ?? new System.Windows.Point(ImageScrollViewer.ViewportWidth / 2, ImageScrollViewer.ViewportHeight / 2);
+        var horizontalOffset = ImageScrollViewer.HorizontalOffset;
+        var verticalOffset = ImageScrollViewer.VerticalOffset;
+
+        _imageZoom = Math.Clamp(zoom, ImageZoomSteps[0], ImageZoomSteps[^1]);
+        _imageFitMode = false;
+        ApplyImageZoom();
+        ImageScrollViewer.UpdateLayout();
+
+        var scaleChange = _imageZoom / Math.Max(previousZoom, ImageZoomSteps[0]);
+        ImageScrollViewer.ScrollToHorizontalOffset((horizontalOffset + anchor.X) * scaleChange - anchor.X);
+        ImageScrollViewer.ScrollToVerticalOffset((verticalOffset + anchor.Y) * scaleChange - anchor.Y);
+    }
+
+    private void ImageScrollViewer_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        var factor = Math.Pow(1.15, e.Delta / 120.0);
+        SetImageZoom(_imageZoom * factor, e.GetPosition(ImageScrollViewer));
+        e.Handled = true;
+    }
+
+    private void ImageZoomOutButton_Click(object sender, RoutedEventArgs e)
+    {
+        var next = ImageZoomSteps.LastOrDefault(step => step < _imageZoom - 0.001);
+        SetImageZoom(next > 0 ? next : ImageZoomSteps[0]);
+    }
+
+    private void ImageZoomInButton_Click(object sender, RoutedEventArgs e)
+    {
+        var next = ImageZoomSteps.FirstOrDefault(step => step > _imageZoom + 0.001);
+        SetImageZoom(next > 0 ? next : ImageZoomSteps[^1]);
+    }
+
+    private void ImageActualSizeButton_Click(object sender, RoutedEventArgs e) => SetImageZoom(1);
+
+    private void ImageFitButton_Click(object sender, RoutedEventArgs e) => FitImageToViewport();
+
+    private void ImageView_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (_imageFitMode)
+            Dispatcher.BeginInvoke(new Action(FitImageToViewport), DispatcherPriority.Loaded);
     }
 
     private void CenterInWorkArea(Rect area)
@@ -727,6 +819,24 @@ public partial class MainWindow : Window
         else if (e.Key == Key.Enter)
         {
             OpenCurrent();
+            e.Handled = true;
+        }
+        else if (ImageView.Visibility == Visibility.Visible &&
+                 (e.Key == Key.Add || e.Key == Key.OemPlus))
+        {
+            ImageZoomInButton_Click(this, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (ImageView.Visibility == Visibility.Visible &&
+                 (e.Key == Key.Subtract || e.Key == Key.OemMinus))
+        {
+            ImageZoomOutButton_Click(this, new RoutedEventArgs());
+            e.Handled = true;
+        }
+        else if (ImageView.Visibility == Visibility.Visible && e.Key == Key.D0 &&
+                 Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            FitImageToViewport();
             e.Handled = true;
         }
         else if (e.Key == Key.E && Keyboard.Modifiers.HasFlag(ModifierKeys.Control) &&

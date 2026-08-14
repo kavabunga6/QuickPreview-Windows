@@ -20,6 +20,7 @@ QuickPreview is a lightweight, open-source file previewer for Windows Explorer. 
 - Browse previous and next files with <kbd>←</kbd> and <kbd>→</kbd> without closing the preview.
 - Keep File Explorer selection synchronized with the last previewed file.
 - Preview images at their original resolution while fitting the window to the screen.
+- Zoom images from 5% to 800% with the mouse wheel, keyboard, or on-screen controls.
 - Respect EXIF Orientation, so portrait photos stay portrait.
 - Play audio and video with seeking, volume control, mute, and media controls.
 - Show embedded MP3, M4A, and FLAC artwork through the Windows thumbnail provider.
@@ -52,6 +53,8 @@ QuickPreview is a lightweight, open-source file previewer for Windows Explorer. 
 | <kbd>←</kbd> / <kbd>→</kbd> | Previous or next file |
 | <kbd>Esc</kbd> | Close preview |
 | <kbd>Enter</kbd> | Open the current file |
+| <kbd>+</kbd> / <kbd>−</kbd> | Zoom an image in or out |
+| <kbd>Ctrl</kbd>+<kbd>0</kbd> | Fit an image to the preview window |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> | Show the current file in Explorer |
 
 ## Installation

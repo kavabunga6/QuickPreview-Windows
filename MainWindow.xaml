@@ -53,9 +53,39 @@
             </StackPanel>
           </Grid>
 
-          <Grid x:Name="ImageView" Visibility="Collapsed" Background="{DynamicResource ImageBackgroundBrush}">
-            <Image x:Name="PreviewImage" Stretch="Uniform" StretchDirection="DownOnly" Margin="22"
-                   RenderOptions.BitmapScalingMode="HighQuality" />
+          <Grid x:Name="ImageView" Visibility="Collapsed" Background="{DynamicResource ImageBackgroundBrush}"
+                SizeChanged="ImageView_SizeChanged">
+            <ScrollViewer x:Name="ImageScrollViewer"
+                          HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                          HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                          PanningMode="Both" PanningDeceleration="0.001"
+                          PreviewMouseWheel="ImageScrollViewer_PreviewMouseWheel">
+              <Border Padding="22,22,22,86">
+                <Image x:Name="PreviewImage" Stretch="Fill"
+                       RenderOptions.BitmapScalingMode="HighQuality" />
+              </Border>
+            </ScrollViewer>
+
+            <Border HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="18"
+                    Padding="6" CornerRadius="16"
+                    Background="{DynamicResource PlayerBarBrush}"
+                    BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+              <StackPanel Orientation="Horizontal">
+                <Button Width="38" Height="38" Padding="0" FontSize="20" Content="−"
+                        ToolTip="Уменьшить" Click="ImageZoomOutButton_Click" />
+                <TextBlock x:Name="ImageZoomText" Width="62" Text="100%"
+                           TextAlignment="Center" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextPrimaryBrush}"
+                           Typography.NumeralAlignment="Tabular" />
+                <Button Width="38" Height="38" Padding="0" FontSize="19" Content="+"
+                        ToolTip="Увеличить" Click="ImageZoomInButton_Click" />
+                <Border Width="1" Margin="7,7" Background="{DynamicResource CardBorderBrush}" />
+                <Button Height="38" Padding="12,0" Content="100%"
+                        ToolTip="Настоящий размер" Click="ImageActualSizeButton_Click" />
+                <Button Height="38" Margin="6,0,0,0" Padding="14,0" Content="Вписать"
+                        ToolTip="Вписать изображение в окно" Click="ImageFitButton_Click" />
+              </StackPanel>
+            </Border>
           </Grid>
 
           <Grid x:Name="TextView" Visibility="Collapsed">

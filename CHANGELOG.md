@@ -5,6 +5,7 @@
 - Add interactive PDF preview using the built-in Microsoft Edge WebView2 PDF viewer.
 - Pretty-print valid JSON and XML files while preserving raw text for malformed documents.
 - Fall back to the Windows system thumbnail when the WebView2 Runtime is unavailable.
+- Add image zoom from 5% to 800% with mouse-wheel, keyboard, actual-size, and fit-to-window controls.
 
 ## 1.0.1 — 2026-08-15
 
