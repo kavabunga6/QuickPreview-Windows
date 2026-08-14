@@ -10,7 +10,9 @@ QuickPreview is a lightweight, open-source file previewer for Windows Explorer. 
 
 **[Download QuickPreview for Windows](https://github.com/kavabunga6/QuickPreview-Windows/releases/latest/download/QuickPreview-Setup.exe)**
 
-![QuickPreview audio player with embedded album artwork](assets/quickpreview-audio-player.png)
+<p align="center">
+  <img src="assets/quickpreview-image-preview.png" width="720" alt="QuickPreview showing an image preview in Windows" />
+</p>
 
 ## Features
 
@@ -26,6 +28,19 @@ QuickPreview is a lightweight, open-source file previewer for Windows Explorer. 
 - Follow the Windows light/dark theme and system accent color automatically.
 - Run quietly in the system tray with optional startup at Windows sign-in.
 - Install per user without administrator privileges.
+
+## Screenshots
+
+<table>
+  <tr>
+    <th>Text and source-code preview</th>
+    <th>Settings and Windows startup</th>
+  </tr>
+  <tr>
+    <td><img src="assets/quickpreview-text-preview.png" alt="QuickPreview text preview" /></td>
+    <td><img src="assets/quickpreview-settings.png" alt="QuickPreview 1.0.1 settings" /></td>
+  </tr>
+</table>
 
 ## Keyboard shortcuts
 
@@ -45,11 +60,13 @@ QuickPreview is a lightweight, open-source file previewer for Windows Explorer. 
 
 The installer adds QuickPreview to the Start menu and Windows Installed Apps. It also includes a standard uninstaller. The release is self-contained, so a separate .NET installation is not required.
 
+### What is new in 1.0.1
+
+Preview windows are now reliably brought to the foreground when opened from File Explorer. QuickPreview immediately returns the window to the normal layer, so it does not remain always on top.
+
 ## Settings and startup
 
 Double-click the QuickPreview tray icon, or right-click it and choose **Settings**. The settings window includes an option to launch QuickPreview automatically when you sign in to Windows. The interface follows the active Windows theme.
-
-![QuickPreview settings with Windows startup toggle](assets/quickpreview-settings.png)
 
 ## Build from source
 
