@@ -23,8 +23,10 @@ QuickPreview is a lightweight, open-source file previewer for Windows Explorer. 
 - Respect EXIF Orientation, so portrait photos stay portrait.
 - Play audio and video with seeking, volume control, mute, and media controls.
 - Show embedded MP3, M4A, and FLAC artwork through the Windows thumbnail provider.
-- Preview text, Markdown, JSON, XML, YAML, CSV, logs, and popular source-code formats.
-- Show folder contents and Windows-generated thumbnails for PDF, Office, and other known file types.
+- Preview text, Markdown, YAML, CSV, logs, and popular source-code formats.
+- Pretty-print valid JSON and XML while keeping malformed documents available as raw text.
+- Read PDF documents interactively with page navigation, scrolling, zoom, search, and printing.
+- Show folder contents and Windows-generated thumbnails for Office and other known file types.
 - Follow the Windows light/dark theme and system accent color automatically.
 - Run quietly in the system tray with optional startup at Windows sign-in.
 - Install per user without administrator privileges.
@@ -60,9 +62,9 @@ QuickPreview is a lightweight, open-source file previewer for Windows Explorer. 
 
 The installer adds QuickPreview to the Start menu and Windows Installed Apps. It also includes a standard uninstaller. The release is self-contained, so a separate .NET installation is not required.
 
-### What is new in 1.0.1
+### What is new in 1.1.0
 
-Preview windows are now reliably brought to the foreground when opened from File Explorer. QuickPreview immediately returns the window to the normal layer, so it does not remain always on top.
+PDF documents now open in an interactive embedded viewer. JSON and XML files are automatically formatted for readability, with the original source preserved when a document is malformed.
 
 ## Settings and startup
 
@@ -86,7 +88,8 @@ The self-contained installer is written to `artifacts\QuickPreview-Setup.exe`.
 ## Notes
 
 - Available video formats depend on media codecs installed in Windows.
-- Interactive PDF and Office rendering is not bundled; QuickPreview uses the system thumbnail when Windows provides one.
+- Interactive PDF preview uses the Microsoft Edge WebView2 Runtime included with current Windows and Microsoft Edge installations. If the runtime is unavailable, QuickPreview falls back to the Windows system thumbnail.
+- Interactive Office rendering is not bundled; QuickPreview uses the system thumbnail when Windows provides one.
 - The global <kbd>Space</kbd> shortcut currently targets File Explorer windows.
 
 ## Русский

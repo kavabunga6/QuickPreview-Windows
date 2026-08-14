@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0 — 2026-08-15
+
+- Add interactive PDF preview using the built-in Microsoft Edge WebView2 PDF viewer.
+- Pretty-print valid JSON and XML files while preserving raw text for malformed documents.
+- Fall back to the Windows system thumbnail when the WebView2 Runtime is unavailable.
+
 ## 1.0.1 — 2026-08-15
 
 - Ensure the preview window is brought to the foreground when opened from File Explorer.

@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -10,6 +11,9 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using System.Xml;
+using System.Xml.Linq;
+using Microsoft.Web.WebView2.Core;
 using WpfButton = System.Windows.Controls.Button;
 
 namespace QuickPreview;
@@ -63,6 +67,7 @@ public partial class MainWindow : Window
     private bool _hasActiveMedia;
     private bool _isMuted;
     private bool _updatingVolumeControls;
+    private bool _pdfWebViewConfigured;
     private double _volume = 0.8;
 
     public MainWindow()
@@ -157,6 +162,12 @@ public partial class MainWindow : Window
             throw new FileNotFoundException("Файл больше не существует.", path);
 
         var extension = Path.GetExtension(path);
+        if (string.Equals(extension, ".pdf", StringComparison.OrdinalIgnoreCase))
+        {
+            await LoadPdfAsync(path);
+            return;
+        }
+
         if (ImageExtensions.Contains(extension))
         {
             LoadImage(path);
@@ -285,6 +296,33 @@ public partial class MainWindow : Window
         }
 
         var text = DecodeText(buffer);
+        var structuredTextStatus = string.Empty;
+        if (info.Length <= maxBytes)
+        {
+            try
+            {
+                var extension = Path.GetExtension(path);
+                if (string.Equals(extension, ".json", StringComparison.OrdinalIgnoreCase))
+                {
+                    text = FormatJson(text);
+                    structuredTextStatus = "форматировано";
+                }
+                else if (string.Equals(extension, ".xml", StringComparison.OrdinalIgnoreCase))
+                {
+                    text = FormatXml(text);
+                    structuredTextStatus = "форматировано";
+                }
+            }
+            catch (JsonException exception)
+            {
+                var line = exception.LineNumber is null ? string.Empty : $", строка {exception.LineNumber.Value + 1}";
+                structuredTextStatus = $"исходный текст — ошибка JSON{line}";
+            }
+            catch (XmlException exception)
+            {
+                structuredTextStatus = $"исходный текст — ошибка XML, строка {exception.LineNumber}";
+            }
+        }
         if (info.Length > maxBytes)
             text += $"\n\n—— Превью ограничено первыми {FormatFileSize(maxBytes)} из {FormatFileSize(info.Length)} ——";
 
@@ -293,7 +331,69 @@ public partial class MainWindow : Window
 
         PreviewText.Text = text;
         PreviewText.ScrollToHome();
+        if (!string.IsNullOrWhiteSpace(structuredTextStatus))
+            FileMetaText.Text += $"  •  {structuredTextStatus}";
         ShowOnly(TextView);
+    }
+
+    private async Task LoadPdfAsync(string path)
+    {
+        try
+        {
+            await PdfWebView.EnsureCoreWebView2Async();
+            if (!_pdfWebViewConfigured)
+            {
+                PdfWebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+                PdfWebView.CoreWebView2.Settings.IsStatusBarEnabled = false;
+                PdfWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = true;
+                PdfWebView.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = true;
+                PdfWebView.CoreWebView2.Settings.IsZoomControlEnabled = true;
+                _pdfWebViewConfigured = true;
+            }
+
+            if (!string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            PdfWebView.CoreWebView2.Navigate(new Uri(path, UriKind.Absolute).AbsoluteUri);
+            ShowOnly(PdfView);
+            FileMetaText.Text += "  •  встроенный PDF-просмотр";
+        }
+        catch (Exception exception) when (exception is WebView2RuntimeNotFoundException or InvalidOperationException or COMException)
+        {
+            await LoadSystemPreviewAsync(path);
+            if (string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase))
+                InfoDetails.Text = "Встроенный PDF-просмотр недоступен. Показан системный эскиз; нажмите Enter, чтобы открыть документ полностью.";
+        }
+    }
+
+    private static string FormatJson(string text)
+    {
+        using var document = JsonDocument.Parse(text, new JsonDocumentOptions
+        {
+            AllowTrailingCommas = true,
+            CommentHandling = JsonCommentHandling.Skip
+        });
+        return JsonSerializer.Serialize(document.RootElement, new JsonSerializerOptions
+        {
+            WriteIndented = true
+        });
+    }
+
+    private static string FormatXml(string text)
+    {
+        var settings = new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null
+        };
+        using var stringReader = new StringReader(text);
+        using var xmlReader = XmlReader.Create(stringReader, settings);
+        var document = XDocument.Load(xmlReader, LoadOptions.PreserveWhitespace);
+        var declaration = document.Declaration?.ToString();
+        var body = document.ToString(SaveOptions.None);
+        return string.IsNullOrWhiteSpace(declaration)
+            ? body
+            : $"{declaration}{Environment.NewLine}{body}";
     }
 
     private async Task LoadFolderPreviewAsync(string path)
@@ -504,6 +604,8 @@ public partial class MainWindow : Window
         PreviewImage.MaxWidth = double.PositiveInfinity;
         PreviewImage.MaxHeight = double.PositiveInfinity;
         PreviewText.Clear();
+        if (PdfWebView.CoreWebView2 is not null)
+            PdfWebView.CoreWebView2.Navigate("about:blank");
         InfoThumbnail.Source = null;
         InfoThumbnail.Width = 220;
         InfoThumbnail.Height = 220;
@@ -537,7 +639,7 @@ public partial class MainWindow : Window
 
     private void ShowOnly(UIElement visible)
     {
-        foreach (var view in new[] { LoadingView, ImageView, TextView, VideoView, AudioView, InfoView, ErrorView })
+        foreach (var view in new[] { LoadingView, ImageView, TextView, PdfView, VideoView, AudioView, InfoView, ErrorView })
             view.Visibility = ReferenceEquals(view, visible) ? Visibility.Visible : Visibility.Collapsed;
     }
 
