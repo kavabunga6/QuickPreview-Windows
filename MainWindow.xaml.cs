@@ -77,6 +77,10 @@ public partial class MainWindow : Window
     private double _imageNaturalHeight;
     private double _imageZoom = 1;
     private bool _imageFitMode = true;
+    private bool _imagePanning;
+    private System.Windows.Point _imagePanStart;
+    private double _imagePanHorizontalOffset;
+    private double _imagePanVerticalOffset;
 
     public MainWindow()
     {
@@ -618,6 +622,7 @@ public partial class MainWindow : Window
         _imageNaturalHeight = 0;
         _imageZoom = 1;
         _imageFitMode = true;
+        EndImagePan();
         ImageZoomText.Text = "100%";
         ImageScrollViewer.ScrollToHorizontalOffset(0);
         ImageScrollViewer.ScrollToVerticalOffset(0);
@@ -752,6 +757,50 @@ public partial class MainWindow : Window
         var factor = Math.Pow(1.15, e.Delta / 120.0);
         SetImageZoom(_imageZoom * factor, e.GetPosition(ImageScrollViewer));
         e.Handled = true;
+    }
+
+    private void ImagePanSurface_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (ImageScrollViewer.ScrollableWidth <= 0 && ImageScrollViewer.ScrollableHeight <= 0)
+            return;
+
+        _imagePanning = true;
+        _imagePanStart = e.GetPosition(ImageScrollViewer);
+        _imagePanHorizontalOffset = ImageScrollViewer.HorizontalOffset;
+        _imagePanVerticalOffset = ImageScrollViewer.VerticalOffset;
+        ImagePanSurface.Cursor = System.Windows.Input.Cursors.SizeAll;
+        ImagePanSurface.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void ImagePanSurface_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (!_imagePanning || e.LeftButton != MouseButtonState.Pressed)
+            return;
+
+        var current = e.GetPosition(ImageScrollViewer);
+        ImageScrollViewer.ScrollToHorizontalOffset(_imagePanHorizontalOffset - (current.X - _imagePanStart.X));
+        ImageScrollViewer.ScrollToVerticalOffset(_imagePanVerticalOffset - (current.Y - _imagePanStart.Y));
+        e.Handled = true;
+    }
+
+    private void ImagePanSurface_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_imagePanning)
+            return;
+
+        EndImagePan();
+        e.Handled = true;
+    }
+
+    private void ImagePanSurface_LostMouseCapture(object sender, System.Windows.Input.MouseEventArgs e) => EndImagePan();
+
+    private void EndImagePan()
+    {
+        _imagePanning = false;
+        if (ImagePanSurface.IsMouseCaptured)
+            ImagePanSurface.ReleaseMouseCapture();
+        ImagePanSurface.Cursor = System.Windows.Input.Cursors.Arrow;
     }
 
     private void ImageZoomOutButton_Click(object sender, RoutedEventArgs e)

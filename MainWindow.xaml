@@ -60,7 +60,11 @@
                           HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                           PanningMode="Both" PanningDeceleration="0.001"
                           PreviewMouseWheel="ImageScrollViewer_PreviewMouseWheel">
-              <Border Padding="22,22,22,86">
+              <Border x:Name="ImagePanSurface" Padding="22,22,22,86" Background="Transparent"
+                      PreviewMouseLeftButtonDown="ImagePanSurface_MouseLeftButtonDown"
+                      PreviewMouseMove="ImagePanSurface_MouseMove"
+                      PreviewMouseLeftButtonUp="ImagePanSurface_MouseLeftButtonUp"
+                      LostMouseCapture="ImagePanSurface_LostMouseCapture">
                 <Image x:Name="PreviewImage" Stretch="Fill"
                        RenderOptions.BitmapScalingMode="HighQuality" />
               </Border>
