@@ -1,0 +1,91 @@
+<Window x:Class="QuickPreview.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Настройки QuickPreview" Icon="assets/quickpreview.ico"
+        Width="560" Height="410" MinWidth="500" MinHeight="380"
+        WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="True"
+        Background="{DynamicResource WindowBackgroundBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        FontFamily="Segoe UI Variable Text,Segoe UI"
+        Loaded="Window_Loaded" PreviewKeyDown="Window_PreviewKeyDown">
+  <WindowChrome.WindowChrome>
+    <WindowChrome CaptionHeight="58" CornerRadius="14" GlassFrameThickness="0"
+                  ResizeBorderThickness="0" UseAeroCaptionButtons="False" />
+  </WindowChrome.WindowChrome>
+
+  <Border Background="{DynamicResource WindowBackgroundBrush}"
+          BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1" CornerRadius="14">
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="58" />
+        <RowDefinition Height="*" />
+        <RowDefinition Height="58" />
+      </Grid.RowDefinitions>
+
+      <Border Background="{DynamicResource HeaderBackgroundBrush}" CornerRadius="14,14,0,0">
+        <Grid Margin="20,0,12,0">
+          <TextBlock Text="Настройки" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+          <Button Style="{StaticResource IconButtonStyle}" Content="&#xE711;"
+                  HorizontalAlignment="Right" Click="CloseButton_Click"
+                  WindowChrome.IsHitTestVisibleInChrome="True" />
+        </Grid>
+      </Border>
+
+      <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="22,20">
+          <TextBlock Text="ОБЩИЕ" FontSize="11" FontWeight="SemiBold"
+                     Foreground="{DynamicResource TextSecondaryBrush}" Margin="4,0,0,9" />
+
+          <Border Padding="18,16" CornerRadius="16" Background="{DynamicResource CardBackgroundBrush}"
+                  BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="Запускать вместе с Windows" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock Text="QuickPreview будет готов к работе сразу после входа в систему"
+                           FontSize="12" Margin="0,5,18,0" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextSecondaryBrush}" />
+              </StackPanel>
+              <CheckBox x:Name="StartupToggle" Grid.Column="1" Style="{StaticResource ToggleSwitchStyle}"
+                        VerticalAlignment="Center" Click="StartupToggle_Click" />
+            </Grid>
+          </Border>
+
+          <Border Margin="0,12,0,0" Padding="18,15" CornerRadius="16"
+                  Background="{DynamicResource CardBackgroundBrush}"
+                  BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="1">
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="Оформление" FontSize="14" FontWeight="SemiBold" />
+                <TextBlock Text="Светлая или тёмная тема меняется автоматически"
+                           FontSize="12" Margin="0,5,18,0"
+                           Foreground="{DynamicResource TextSecondaryBrush}" />
+              </StackPanel>
+              <TextBlock Grid.Column="1" Text="Как в Windows" FontSize="12" VerticalAlignment="Center"
+                         Foreground="{DynamicResource TextSecondaryBrush}" />
+            </Grid>
+          </Border>
+
+          <TextBlock x:Name="StatusText" Margin="4,12,4,0" FontSize="12" TextWrapping="Wrap"
+                     Foreground="{DynamicResource TextSecondaryBrush}" />
+        </StackPanel>
+      </ScrollViewer>
+
+      <Border Grid.Row="2" Background="{DynamicResource HeaderBackgroundBrush}" CornerRadius="0,0,14,14">
+        <Grid Margin="20,0">
+          <TextBlock x:Name="VersionText" VerticalAlignment="Center" FontSize="11"
+                     Foreground="{DynamicResource TextSecondaryBrush}" />
+          <TextBlock Text="Space — предпросмотр" HorizontalAlignment="Right" VerticalAlignment="Center"
+                     FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}" />
+        </Grid>
+      </Border>
+    </Grid>
+  </Border>
+</Window>

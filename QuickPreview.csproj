@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net6.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>QuickPreview</AssemblyName>
+    <RootNamespace>QuickPreview</RootNamespace>
+    <Version>1.0.0</Version>
+    <Authors>QuickPreview</Authors>
+    <Product>QuickPreview</Product>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>assets\quickpreview.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="assets\quickpreview.ico" />
+    <Resource Include="assets\quickpreview-tray.ico" />
+    <Resource Include="assets\quickpreview-128.png" />
+  </ItemGroup>
+</Project>
