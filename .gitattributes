@@ -1,0 +1,6 @@
+# Keep PDF byte offsets intact and preserve upstream/fixture bytes on Windows.
+*.pdf binary
+assets/licenses/** -text -whitespace
+assets/model-viewer/vendor/** -text -whitespace
+tests/**/fixtures/** -text -whitespace
+tests/Fixtures/** -text -whitespace

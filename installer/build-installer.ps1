@@ -35,6 +35,22 @@ if ($LASTEXITCODE -ne 0) {
     throw "dotnet publish failed with exit code $LASTEXITCODE."
 }
 
+$loaderPath = Join-Path $payloadDirectory 'WebView2Loader.dll'
+if (-not (Test-Path -LiteralPath $loaderPath)) {
+    throw 'Publish payload is missing WebView2Loader.dll; PDF preview would fail after installation.'
+}
+
+foreach ($requiredAsset in @('assets\model-viewer\viewer.html', 'assets\model-viewer\viewer.js',
+        'assets\model-viewer\vendor\o3dv.min.js', 'assets\model-viewer\vendor\occt\occt-import-js.wasm',
+        'assets\spreadsheet-viewer\viewer.html', 'assets\spreadsheet-viewer\viewer.js',
+        'assets\spreadsheet-viewer\viewer.css', 'assets\licenses\ExcelDataReader-LICENSE.txt',
+        'assets\licenses\ExcelNumberFormat-LICENSE.txt',
+        'SUPPORTED_FORMATS.md', 'THIRD-PARTY-NOTICES.md')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $payloadDirectory $requiredAsset))) {
+        throw "Publish payload is missing required preview asset: $requiredAsset"
+    }
+}
+
 & $innoCompiler $innoScript
 if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup failed with exit code $LASTEXITCODE."

@@ -7,3 +7,5 @@ installer/payload/
 artifacts/
 dist*/
 *.log
+.packages/
+tests/**/screenshots/

@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net6.0-windows10.0.17763.0</TargetFramework>
+    <UseWPF>true</UseWPF><PlatformTarget>x64</PlatformTarget><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <AppPayloadDir Condition="'$(AppPayloadDir)'==''">$(MSBuildProjectDirectory)/artifacts/baseline-app</AppPayloadDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
+    <Reference Include="System.Text.Encoding.CodePages"><HintPath>$(AppPayloadDir)/System.Text.Encoding.CodePages.dll</HintPath></Reference>
+    <Reference Include="System.Security.Cryptography.Pkcs"><HintPath>$(AppPayloadDir)/System.Security.Cryptography.Pkcs.dll</HintPath></Reference>
+    <Reference Include="System.Formats.Asn1"><HintPath>$(AppPayloadDir)/System.Formats.Asn1.dll</HintPath></Reference>
+    <Reference Include="QuickPreview"><HintPath>$(AppPayloadDir)/QuickPreview.dll</HintPath></Reference>
+    <Reference Include="Microsoft.Web.WebView2.Core"><HintPath>$(AppPayloadDir)/Microsoft.Web.WebView2.Core.dll</HintPath></Reference>
+    <Reference Include="Microsoft.Web.WebView2.Wpf"><HintPath>$(AppPayloadDir)/Microsoft.Web.WebView2.Wpf.dll</HintPath></Reference>
+    <Content Include="$(AppPayloadDir)/**/*" Exclude="$(AppPayloadDir)/**/*.pdb;$(AppPayloadDir)/**/*.xml" Link="%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="Always" />
+    <Compile Include="../RapidSelectionSmoke/NativeExplorerFixture.cs" Link="NativeExplorerFixture.cs" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net6.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../OfficePreviewService.cs" Link="OfficePreviewService.cs" />
+    <Compile Include="../../SafeXmlDocument.cs" Link="SafeXmlDocument.cs" />
+    <Compile Include="../../LegacyOfficePreviewService.cs" Link="LegacyOfficePreviewService.cs" />
+    <Content Include="fixtures/legacy.doc;fixtures/legacy.ppt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

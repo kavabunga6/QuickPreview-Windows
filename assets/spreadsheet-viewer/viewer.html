@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Табличный просмотр</title>
+  <link rel="stylesheet" href="viewer.css">
+  <script src="viewer.js" defer></script>
+</head>
+<body>
+  <main>
+    <header class="toolbar" aria-label="Масштаб таблицы">
+      <div class="zoom-controls" role="group" aria-label="Масштаб">
+        <button id="zoom-out" type="button" aria-label="Уменьшить таблицу" title="Уменьшить">−</button>
+        <button id="zoom-reset" type="button" title="Масштаб 100%" aria-label="Сбросить масштаб до 100%">100%</button>
+        <button id="zoom-in" type="button" aria-label="Увеличить таблицу" title="Увеличить">+</button>
+        <button id="fit" type="button" title="Вписать таблицу по ширине">Вписать</button>
+      </div>
+      <span id="sheet-info"></span>
+    </header>
+    <div id="sheet-scroll" tabindex="0" role="region" aria-label="Таблица">
+      <div id="sheet-scale"><table id="sheet-table"></table></div>
+    </div>
+    <footer class="sheet-bar">
+      <div id="sheet-tabs" role="tablist" aria-label="Листы книги"></div>
+      <span id="limit-state" role="status"></span>
+    </footer>
+    <div id="status" role="status">Готовим таблицу…</div>
+  </main>
+</body>
+</html>

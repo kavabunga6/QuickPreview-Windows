@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -15,6 +16,7 @@ using System.Xml;
 using System.Xml.Linq;
 using Microsoft.Web.WebView2.Core;
 using WpfButton = System.Windows.Controls.Button;
+using FontFamily = System.Windows.Media.FontFamily;
 
 namespace QuickPreview;
 
@@ -25,33 +27,9 @@ public partial class MainWindow : Window
     private const uint SwpNoSize = 0x0001;
     private const uint SwpNoMove = 0x0002;
     private const uint SwpShowWindow = 0x0040;
+    private const uint SwpNoActivate = 0x0010;
     private const int SwRestore = 9;
 
-    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".ico", ".wdp", ".webp"
-    };
-
-    private static readonly HashSet<string> AudioExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".mp3", ".wav", ".wma", ".aac", ".m4a", ".flac"
-    };
-
-    private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".mp4", ".m4v", ".mov", ".avi", ".wmv", ".webm"
-    };
-
-    private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".txt", ".md", ".markdown", ".log", ".json", ".jsonl", ".xml", ".yaml", ".yml",
-        ".csv", ".tsv", ".ini", ".cfg", ".conf", ".toml", ".env", ".properties",
-        ".cs", ".fs", ".vb", ".cpp", ".c", ".h", ".hpp", ".java", ".kt", ".swift",
-        ".js", ".jsx", ".ts", ".tsx", ".html", ".htm", ".css", ".scss", ".less",
-        ".py", ".rb", ".php", ".go", ".rs", ".sh", ".ps1", ".bat", ".cmd",
-        ".sql", ".graphql", ".vue", ".svelte", ".dockerfile", ".gitignore", ".gitattributes",
-        ".srt", ".vtt", ".ass", ".rtf"
-    };
     private static readonly double[] ImageZoomSteps =
     {
         0.05, 0.10, 0.125, 0.25, 0.33, 0.50, 0.67, 0.75, 1.0, 1.25, 1.50, 2.0, 3.0, 4.0, 6.0, 8.0
@@ -61,6 +39,7 @@ public partial class MainWindow : Window
     private readonly MediaPlayer _audioPlayer = new();
     private readonly List<string> _navigationPaths = new();
     private string? _currentPath;
+    private bool _currentPathIsDirectory;
     private int _navigationIndex = -1;
     private Slider? _activeSlider;
     private TextBlock? _activeTimeText;
@@ -72,6 +51,15 @@ public partial class MainWindow : Window
     private bool _isMuted;
     private bool _updatingVolumeControls;
     private bool _pdfWebViewConfigured;
+    private Task? _pdfInitializationTask;
+    private Task? _modelInitializationTask;
+    private Task<CoreWebView2Environment>? _webEnvironmentTask;
+    private ModelPreviewSession? _modelSession;
+    private NativePdfPreview? _nativePdf;
+    private uint _pdfPageIndex;
+    private CancellationTokenSource? _previewCancellation;
+    private Task _navigationTail = Task.CompletedTask;
+    private int _navigationEpoch;
     private double _volume = 0.8;
     private double _imageNaturalWidth;
     private double _imageNaturalHeight;
@@ -93,52 +81,129 @@ public partial class MainWindow : Window
         AudioVolumeSlider.ValueChanged += VolumeSlider_ValueChanged;
         VideoVolumeSlider.ValueChanged += VolumeSlider_ValueChanged;
         SyncVolumeControls();
+        InitializePreviewResourcePolicy();
+        InitializeOriginLifetimeMonitoring();
     }
 
-    public void ShowPreview(string path) => _ = ShowPreviewAsync(path, rebuildNavigation: true);
-
-    private async Task ShowPreviewAsync(string path, bool rebuildNavigation)
+    public void ShowPreview(string path, bool activateWindow = true)
     {
-        if (rebuildNavigation)
-            BuildNavigation(path);
+        _navigationEpoch++;
+        _ = ShowPreviewAsync(path, rebuildNavigation: true, activateWindow: activateWindow);
+    }
+
+    internal void UpdatePreviewFromExplorer(string path)
+    {
+        if (string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase)) return;
+        _ = ShowPreviewAsync(path, rebuildNavigation: false, activateWindow: false, preserveWindow: IsVisible);
+    }
+
+    private async Task ShowPreviewAsync(string path, bool rebuildNavigation, bool activateWindow = true,
+        bool preserveWindow = false, bool preferSource = false)
+    {
+        _previewCancellation?.Cancel();
+        _previewCancellation?.Dispose();
+        _previewCancellation = new CancellationTokenSource();
+        var token = _previewCancellation.Token;
 
         _currentPath = path;
-        ResetViews();
-        PopulateHeader(path);
-        SetDefaultWindowSize();
-
-        BringPreviewToFront();
-
+        _currentPathIsDirectory = false;
+        _previewLoading = true;
         try
         {
-            await LoadPreviewAsync(path);
+            ResetViews();
+            if (!preserveWindow)
+            {
+                SetDefaultWindowSize();
+                BringPreviewToFront(activateWindow);
+            }
+            else
+            {
+                KeepAboveOriginExplorer();
+            }
+            FileNameText.Text = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            FileMetaText.Text = "Читаем свойства…";
+            _ = RevealLoadingIndicatorAsync(token);
+            // Coalesce key repeats before starting parsers and browser navigations.
+            // The header follows selection immediately; old content stays hidden.
+            if (preserveWindow)
+                await Task.Delay(80, token);
+            var pathInfo = await FolderPreviewService.ReadPathInfoAsync(path, token);
+            token.ThrowIfCancellationRequested();
+            if (pathInfo is null) throw new IOException("Свойства файла временно недоступны. Откройте его в Проводнике.");
+            if (!pathInfo.Exists) throw new FileNotFoundException("Файл больше не существует.", path);
+            _currentPathIsDirectory = pathInfo.IsDirectory;
+            PopulateHeader(path, pathInfo);
+            if (rebuildNavigation && !ExplorerSelectionService.HasOriginWindow)
+                await BuildNavigationAsync(path, token);
+            await ConfigureRepresentationsAsync(path, token);
+            token.ThrowIfCancellationRequested();
+            if (preferSource && _hasSourcePreview) PreviewTabs.SelectedIndex = 1;
+            if (WindowState == WindowState.Minimized)
+            {
+                _reloadAfterMinimize = path;
+                _restoreSourceAfterMinimize = _sourceSelected;
+                _previewCancellation.Cancel();
+                return;
+            }
+            await LoadPreviewAsync(path, pathInfo, token);
+            token.ThrowIfCancellationRequested();
+            KeepAboveOriginExplorer();
         }
         catch (Exception exception)
         {
-            if (!string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase))
+            if (token.IsCancellationRequested || !string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase))
                 return;
 
-            ShowError($"Не удалось открыть предпросмотр.\n{exception.Message}");
+            if (exception is not OperationCanceledException)
+            {
+                ShowError($"Не удалось открыть предпросмотр.\n{exception.Message}");
+                KeepAboveOriginExplorer();
+            }
+        }
+        finally
+        {
+            if (_previewCancellation?.Token == token) _previewLoading = false;
+            QueueBrowserResourceUpdate();
         }
     }
 
-    public void HidePreview()
+    public void HidePreview() => HidePreviewCore(restoreFocus: true);
+
+    internal void HidePreviewWithoutRestoringOriginFocus() => HidePreviewCore(restoreFocus: false);
+
+    private void HidePreviewCore(bool restoreFocus)
     {
-        var pathToSelect = IsVisible ? _currentPath : null;
+        var restoreExplorerFocus = restoreFocus && IsVisible && ExplorerSelectionService.HasOriginWindow;
+        _navigationEpoch++;
+        ResetBrowserLoadingState();
+        _previewLoading = false;
+        Hide();
+        _previewCancellation?.Cancel();
+        ReleasePdfDocument();
+        ReleaseSpreadsheetDocument();
+        ResetRepresentations();
+        DisposeModelPreview();
         StopMedia();
         PreviewImage.Source = null;
         InfoThumbnail.Source = null;
+        _nativePdf = null;
+        NativePdfImage.Source = null;
+        ArchiveEntriesList.ItemsSource = null;
+        TableRowsList.ItemsSource = null;
         _currentPath = null;
-        Hide();
 
-        if (!string.IsNullOrWhiteSpace(pathToSelect))
-            _ = ExplorerSelectionService.TrySelectPathInOriginWindow(pathToSelect);
+        if (restoreExplorerFocus)
+            ExplorerSelectionService.RestoreOriginFocus();
+        ExplorerSelectionService.ForgetOriginWindow();
     }
 
-    private void BringPreviewToFront()
+    private void BringPreviewToFront(bool activateWindow)
     {
         if (!IsVisible)
+        {
+            ShowActivated = activateWindow;
             Show();
+        }
 
         if (WindowState == WindowState.Minimized)
             WindowState = WindowState.Normal;
@@ -146,6 +211,17 @@ public partial class MainWindow : Window
         var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
         if (handle == IntPtr.Zero)
             return;
+
+        if (!activateWindow)
+        {
+            // HWND_TOP alone can leave a newly shown background-process window
+            // behind Explorer. Return to the normal band in the same UI turn.
+            _ = SetWindowPos(handle, HwndTopmost, 0, 0, 0, 0,
+                SwpNoMove | SwpNoSize | SwpShowWindow | SwpNoActivate);
+            _ = SetWindowPos(handle, HwndNotTopmost, 0, 0, 0, 0,
+                SwpNoMove | SwpNoSize | SwpShowWindow | SwpNoActivate);
+            return;
+        }
 
         _ = ShowWindow(handle, SwRestore);
 
@@ -162,77 +238,184 @@ public partial class MainWindow : Window
         Focus();
     }
 
-    private async Task LoadPreviewAsync(string path)
+    internal bool KeepAboveOriginExplorer()
     {
-        if (Directory.Exists(path))
+        if (!IsVisible || WindowState == WindowState.Minimized)
+            return false;
+        var foreground = GetForegroundWindow();
+        if (!ExplorerSelectionService.IsOriginWindow(foreground) || !ExplorerSelectionService.IsOriginTabActive)
+            return false;
+        var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (handle == IntPtr.Zero)
+            return false;
+
+        if (IsWindowAbove(handle, foreground)) return true;
+        if (GetForegroundWindow() != foreground) return false;
+        _ = SetWindowPos(handle, IntPtr.Zero, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+        if (IsWindowAbove(handle, foreground)) return true;
+        if (GetForegroundWindow() != foreground) return false;
+
+        // Background-process foreground policy can ignore HWND_TOP. A transient
+        // trip through the topmost band also handles that case without activation.
+        _ = SetWindowPos(handle, HwndTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+        _ = SetWindowPos(handle, HwndNotTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate);
+        return IsWindowAbove(handle, foreground);
+    }
+
+    private static bool IsWindowAbove(IntPtr window, IntPtr other)
+    {
+        const uint previousWindow = 3; // GW_HWNDPREV: immediately above this window
+        var current = GetWindow(other, previousWindow);
+        var visited = new HashSet<IntPtr>();
+        for (var count = 0; current != IntPtr.Zero && count < 512 && visited.Add(current); count++)
         {
-            await LoadFolderPreviewAsync(path);
+            if (current == window) return true;
+            current = GetWindow(current, previousWindow);
+        }
+        return false;
+    }
+
+    private async Task RevealLoadingIndicatorAsync(CancellationToken token)
+    {
+        try
+        {
+            // Fast local previews should not flash a loading label between files.
+            await Task.Delay(200, token);
+            token.ThrowIfCancellationRequested();
+            LoadingView.Opacity = 1;
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task LoadPreviewAsync(string path, PreviewPathInfo pathInfo, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (pathInfo.IsDirectory)
+        {
+            await LoadFolderPreviewAsync(path, token);
             return;
         }
-
-        if (!File.Exists(path))
-            throw new FileNotFoundException("Файл больше не существует.", path);
 
         var extension = Path.GetExtension(path);
         if (string.Equals(extension, ".pdf", StringComparison.OrdinalIgnoreCase))
         {
-            await LoadPdfAsync(path);
+            await LoadPdfAsync(path, token);
             return;
         }
 
-        if (ImageExtensions.Contains(extension))
+        if (ModelPreviewService.Supports(path))
         {
-            LoadImage(path);
+            await LoadModelAsync(path, token);
             return;
         }
-
-        if (AudioExtensions.Contains(extension))
+        if (DrawingPreviewService.Supports(path))
         {
-            await LoadAudioAsync(path);
+            await LoadRenderedImageAsync(path, drawing: true, token);
+            return;
+        }
+        if (SvgPreviewService.Supports(path))
+        {
+            var image = await SvgPreviewService.LoadAsync(path, token);
+            token.ThrowIfCancellationRequested();
+            ShowBitmap(image, "SVG · векторное изображение");
+            return;
+        }
+        if (FontPreviewService.Supports(path))
+        {
+            var font = FontPreviewService.Load(path);
+            FontNameText.Text = font.Name;
+            FontDetailsText.Text = font.Details;
+            FontSamplesPanel.SetValue(System.Windows.Documents.TextElement.FontFamilyProperty, font.Family);
+            FileMetaText.Text += "  •  образец шрифта";
+            ShowOnly(FontView);
+            return;
+        }
+        if (DocumentPreviewService.Supports(path))
+        {
+            var document = await DocumentPreviewService.LoadAsync(path, token);
+            token.ThrowIfCancellationRequested();
+            ShowTextContent(document.Text, document.Summary, document.IsMonospaced);
+            return;
+        }
+        if (TabularPreviewService.Supports(path))
+        {
+            await LoadTableAsync(path, token);
+            return;
+        }
+        if (TechnicalPreviewService.Supports(path))
+        {
+            await LoadTechnicalAsync(path, token);
             return;
         }
 
-        if (VideoExtensions.Contains(extension))
+        if (ArchivePreviewService.Supports(path))
+        {
+            await LoadArchiveAsync(path, token);
+            return;
+        }
+
+        if (SpreadsheetPreviewService.Supports(path))
+        {
+            await LoadSpreadsheetAsync(path, token);
+            return;
+        }
+
+        if (OfficePreviewService.Supports(path))
+        {
+            await LoadOfficeAsync(path, token);
+            return;
+        }
+
+        if (ExtendedImagePreviewService.Supports(path))
+        {
+            await LoadRenderedImageAsync(path, drawing: false, token);
+            return;
+        }
+
+        if (FormatCatalog.ImageExtensions.Contains(extension))
+        {
+            await LoadNativeImageAsync(path, token);
+            return;
+        }
+
+        // .ts is also the TypeScript source extension; text gets priority over media.
+        var ambiguousText = extension.ToLowerInvariant() is ".ts" or ".mts" or ".sub" or ".nc" or ".out";
+        if (FormatCatalog.IsKnownText(path) && (!ambiguousText || await LooksLikeTextAsync(path, pathInfo.Length, token)))
+        {
+            token.ThrowIfCancellationRequested();
+            await LoadTextAsync(path, pathInfo.Length, token);
+            return;
+        }
+
+        if (FormatCatalog.AudioExtensions.Contains(extension))
+        {
+            await LoadAudioAsync(path, pathInfo.Length, token);
+            return;
+        }
+
+        if (FormatCatalog.VideoExtensions.Contains(extension))
         {
             LoadVideo(path);
             return;
         }
 
-        if (TextExtensions.Contains(extension) || await LooksLikeTextAsync(path))
+        if (await LooksLikeTextAsync(path, pathInfo.Length, token))
         {
-            await LoadTextAsync(path);
+            token.ThrowIfCancellationRequested();
+            await LoadTextAsync(path, pathInfo.Length, token);
             return;
         }
 
-        await LoadSystemPreviewAsync(path);
+        token.ThrowIfCancellationRequested();
+        await LoadSystemPreviewAsync(path, token);
     }
 
-    private void LoadImage(string path)
-    {
-        BitmapFrame frame;
-        using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-        {
-            var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-            frame = decoder.Frames.OrderByDescending(item => (long)item.PixelWidth * item.PixelHeight).First();
-        }
-
-        var orientation = ReadExifOrientation(frame);
-        BitmapSource bitmap = ApplyExifOrientation(frame, orientation);
-        bitmap.Freeze();
-
-        PreviewImage.Source = bitmap;
-        FitWindowToImage(bitmap);
-        ShowOnly(ImageView);
-        FileMetaText.Text = $"{bitmap.PixelWidth} × {bitmap.PixelHeight}  •  {FormatFileSize(new FileInfo(path).Length)}";
-        Dispatcher.BeginInvoke(new Action(FitImageToViewport), DispatcherPriority.Loaded);
-    }
-
-    private async Task LoadAudioAsync(string path)
+    private async Task LoadAudioAsync(string path, long length, CancellationToken token)
     {
         ResetAudioArtwork();
         ConfigureMedia(usingAudioPlayer: true, AudioPositionSlider, AudioTimeText, AudioPlayPauseButton);
         AudioTitleText.Text = Path.GetFileNameWithoutExtension(path);
-        AudioFormatText.Text = $"{Path.GetExtension(path).TrimStart('.').ToUpperInvariant()}  •  {FormatFileSize(new FileInfo(path).Length)}";
+        AudioFormatText.Text = $"{Path.GetExtension(path).TrimStart('.').ToUpperInvariant()}  •  {FormatFileSize(length)}";
         AudioDurationText.Text = "0:00";
         AudioDurationHeroText.Text = "—:—";
         ApplyVolumeState();
@@ -244,6 +427,7 @@ public partial class MainWindow : Window
         StartMediaTimer();
 
         var artwork = await Task.Run(() => ShellThumbnailService.TryGetThumbnail(path, 512, thumbnailOnly: true));
+        token.ThrowIfCancellationRequested();
         if (!string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase) || artwork is null)
             return;
 
@@ -287,73 +471,72 @@ public partial class MainWindow : Window
         _mediaTimer.Start();
     }
 
-    private async Task LoadTextAsync(string path)
+    private async Task LoadTextAsync(string path, long length, CancellationToken token)
     {
-        const int maxBytes = 2 * 1024 * 1024;
-        var info = new FileInfo(path);
-        var bytesToRead = (int)Math.Min(info.Length, maxBytes);
-        var buffer = new byte[bytesToRead];
-        await using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite,
-                         64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
-        {
-            var totalRead = 0;
-            while (totalRead < buffer.Length)
-            {
-                var read = await stream.ReadAsync(buffer.AsMemory(totalRead, buffer.Length - totalRead));
-                if (read == 0) break;
-                totalRead += read;
-            }
+        const int maximumBytes = 2 * 1024 * 1024;
+        var buffer = await BoundedFileReader.ReadAsync(path, maximumBytes, token);
+        var prepared = await Task.Run(() => PrepareText(path, buffer, length, token), token);
+        token.ThrowIfCancellationRequested();
+        if (!string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase)) return;
+        PreviewText.Text = prepared.Text;
+        PreviewText.ScrollToHome();
+        if (!string.IsNullOrWhiteSpace(prepared.Status)) FileMetaText.Text += $"  •  {prepared.Status}";
+        ShowOnly(TextView);
+    }
 
-            if (totalRead != buffer.Length)
-                Array.Resize(ref buffer, totalRead);
-        }
-
+    private static (string Text, string Status) PrepareText(string path, byte[] buffer, long length, CancellationToken token)
+    {
+        const int maximumBytes = 2 * 1024 * 1024;
+        token.ThrowIfCancellationRequested();
         var text = DecodeText(buffer);
-        var structuredTextStatus = string.Empty;
-        if (info.Length <= maxBytes)
+        var status = string.Empty;
+        if (length <= maximumBytes)
         {
             try
             {
                 var extension = Path.GetExtension(path);
-                if (string.Equals(extension, ".json", StringComparison.OrdinalIgnoreCase))
+                if (extension.Equals(".json", StringComparison.OrdinalIgnoreCase))
                 {
                     text = FormatJson(text);
-                    structuredTextStatus = "форматировано";
+                    status = "форматировано";
                 }
-                else if (string.Equals(extension, ".xml", StringComparison.OrdinalIgnoreCase))
+                else if (extension.Equals(".xml", StringComparison.OrdinalIgnoreCase))
                 {
                     text = FormatXml(text);
-                    structuredTextStatus = "форматировано";
+                    status = "форматировано";
                 }
             }
             catch (JsonException exception)
             {
                 var line = exception.LineNumber is null ? string.Empty : $", строка {exception.LineNumber.Value + 1}";
-                structuredTextStatus = $"исходный текст — ошибка JSON{line}";
+                status = $"исходный текст — ошибка JSON{line}";
             }
             catch (XmlException exception)
             {
-                structuredTextStatus = $"исходный текст — ошибка XML, строка {exception.LineNumber}";
+                var line = exception.LineNumber > 0 ? $", строка {exception.LineNumber}" : string.Empty;
+                status = $"исходный текст — ошибка XML{line}";
             }
         }
-        if (info.Length > maxBytes)
-            text += $"\n\n—— Превью ограничено первыми {FormatFileSize(maxBytes)} из {FormatFileSize(info.Length)} ——";
-
-        if (!string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase))
-            return;
-
-        PreviewText.Text = text;
-        PreviewText.ScrollToHome();
-        if (!string.IsNullOrWhiteSpace(structuredTextStatus))
-            FileMetaText.Text += $"  •  {structuredTextStatus}";
-        ShowOnly(TextView);
+        if (text.Length > maximumBytes)
+        {
+            text = text[..maximumBytes];
+            status += " · форматированный текст ограничен";
+        }
+        if (length > maximumBytes)
+            text += $"\n\n—— Превью ограничено первыми {FormatFileSize(maximumBytes)} из {FormatFileSize(length)} ——";
+        token.ThrowIfCancellationRequested();
+        return (text, status);
     }
 
-    private async Task LoadPdfAsync(string path)
+    private async Task LoadPdfAsync(string path, CancellationToken token)
     {
+        _pdfLoading = true;
         try
         {
-            await PdfWebView.EnsureCoreWebView2Async();
+            _pdfInitializationTask ??= InitializePdfWebViewAsync();
+            await _pdfInitializationTask.WaitAsync(token);
+            token.ThrowIfCancellationRequested();
+            ResumeBrowser(PdfWebView);
             if (!_pdfWebViewConfigured)
             {
                 PdfWebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
@@ -364,19 +547,243 @@ public partial class MainWindow : Window
                 _pdfWebViewConfigured = true;
             }
 
-            if (!string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase))
-                return;
-
-            PdfWebView.CoreWebView2.Navigate(new Uri(path, UriKind.Absolute).AbsoluteUri);
+            await NavigatePdfAsync(new Uri(path, UriKind.Absolute).AbsoluteUri, token);
+            token.ThrowIfCancellationRequested();
+            _pdfLoading = false;
             ShowOnly(PdfView);
             FileMetaText.Text += "  •  встроенный PDF-просмотр";
         }
-        catch (Exception exception) when (exception is WebView2RuntimeNotFoundException or InvalidOperationException or COMException)
+        catch (Exception exception) when (exception is WebView2RuntimeNotFoundException or InvalidOperationException or
+                                         COMException or DllNotFoundException or BadImageFormatException or FileNotFoundException or TimeoutException)
         {
-            await LoadSystemPreviewAsync(path);
-            if (string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase))
-                InfoDetails.Text = "Встроенный PDF-просмотр недоступен. Показан системный эскиз; нажмите Enter, чтобы открыть документ полностью.";
+            token.ThrowIfCancellationRequested();
+            PdfWebView.CoreWebView2?.Stop();
+            var document = await NativePdfPreview.OpenAsync(path, token);
+            token.ThrowIfCancellationRequested();
+            _nativePdf = document;
+            _pdfPageIndex = 0;
+            await RenderPdfPageAsync(token);
+            token.ThrowIfCancellationRequested();
+            FileMetaText.Text += "  •  PDF-просмотр Windows";
         }
+        finally
+        {
+            if (_previewCancellation?.Token == token) _pdfLoading = false;
+            QueueBrowserResourceUpdate();
+        }
+    }
+
+    private async Task NavigatePdfAsync(string uri, CancellationToken token)
+    {
+        var core = PdfWebView.CoreWebView2;
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ulong? navigationId = null;
+        void Starting(object? sender, CoreWebView2NavigationStartingEventArgs args)
+        {
+            // A cancelled A request must not cancel a newer A navigation.
+            if (token.IsCancellationRequested || !string.Equals(args.Uri, uri, StringComparison.OrdinalIgnoreCase)) return;
+            navigationId = args.NavigationId;
+        }
+        void Completed(object? sender, CoreWebView2NavigationCompletedEventArgs args)
+        {
+            if (args.NavigationId != navigationId) return;
+            if (args.IsSuccess) completed.TrySetResult();
+            else completed.TrySetException(new InvalidOperationException("Не удалось загрузить PDF-просмотр."));
+        }
+        core.NavigationStarting += Starting;
+        core.NavigationCompleted += Completed;
+        try
+        {
+            token.ThrowIfCancellationRequested();
+            core.Navigate(uri);
+            // Keep the previous PDF concealed until THIS navigation has finished.
+            await completed.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+        }
+        finally
+        {
+            core.NavigationStarting -= Starting;
+            core.NavigationCompleted -= Completed;
+        }
+    }
+
+    private async Task InitializePdfWebViewAsync()
+    {
+        await PdfWebView.EnsureCoreWebView2Async(await GetWebEnvironmentAsync());
+        ConfigureBrowserResources(PdfWebView.CoreWebView2);
+    }
+
+    private Task<CoreWebView2Environment> GetWebEnvironmentAsync()
+    {
+        if (_webEnvironmentTask is not null) return _webEnvironmentTask;
+        if (File.Exists(Path.Combine(AppContext.BaseDirectory, "WebView2Loader.dll")))
+            CoreWebView2Environment.SetLoaderDllFolderPath(AppContext.BaseDirectory);
+        var userDataPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "QuickPreview", "WebView2");
+        return _webEnvironmentTask = CoreWebView2Environment.CreateAsync(userDataFolder: userDataPath);
+    }
+
+    private async Task InitializeModelWebViewAsync()
+    {
+        await ModelWebView.EnsureCoreWebView2Async(await GetWebEnvironmentAsync());
+        ConfigureBrowserResources(ModelWebView.CoreWebView2);
+    }
+
+    private async Task LoadModelAsync(string path, CancellationToken token)
+    {
+        _modelLoading = true;
+        ModelPreviewSession? session = null;
+        try
+        {
+            session = await ModelPreviewService.CreateSessionAsync(path, token);
+            _modelInitializationTask ??= InitializeModelWebViewAsync();
+            await _modelInitializationTask.WaitAsync(token);
+            token.ThrowIfCancellationRequested();
+            ResumeBrowser(ModelWebView);
+            _modelSession = session;
+            var color = (System.Windows.Application.Current.Resources["PreviewBackgroundBrush"] as SolidColorBrush)?.Color;
+            session.Attach(ModelWebView.CoreWebView2, color is { } value && value.R + value.G + value.B > 384);
+            var info = await session.Ready.WaitAsync(token);
+            token.ThrowIfCancellationRequested();
+            _modelLoading = false;
+            FileMetaText.Text += $"  •  {info.Summary}";
+            ShowOnly(ModelView);
+        }
+        catch
+        {
+            session?.Dispose();
+            if (ReferenceEquals(_modelSession, session)) _modelSession = null;
+            throw;
+        }
+        finally
+        {
+            if (_previewCancellation?.Token == token) _modelLoading = false;
+            QueueBrowserResourceUpdate();
+        }
+    }
+
+    private void DisposeModelPreview()
+    {
+        _modelSession?.Dispose();
+        _modelSession = null;
+    }
+
+    private async Task LoadRenderedImageAsync(string path, bool drawing, CancellationToken token)
+    {
+        try
+        {
+            var preview = drawing ? await DrawingPreviewService.LoadAsync(path, token) :
+                await ExtendedImagePreviewService.LoadAsync(path, token);
+            token.ThrowIfCancellationRequested();
+            ShowBitmap(preview.Image, preview.Summary);
+        }
+        catch (NotSupportedException) when (!drawing && !token.IsCancellationRequested &&
+            Path.GetExtension(path).ToLowerInvariant() is ".jxr" or ".hdp" or ".wdp")
+        {
+            // Optional WIC codecs can support camera/JPEG-XR variants unavailable to
+            // the bundled decoder; retain those installed Windows capabilities.
+            await LoadNativeImageAsync(path, token);
+        }
+    }
+
+    private void ShowBitmap(BitmapSource image, string summary)
+    {
+        PreviewImage.Source = image;
+        FitWindowToImage(image);
+        ShowOnly(ImageView);
+        FileMetaText.Text += $"  •  {summary}";
+        Dispatcher.BeginInvoke(new Action(FitImageToViewport), DispatcherPriority.Loaded);
+    }
+
+    private void ShowTextContent(string text, string summary, bool monospaced = true)
+    {
+        PreviewText.Text = text;
+        PreviewText.TextWrapping = monospaced ? TextWrapping.NoWrap : TextWrapping.Wrap;
+        PreviewText.FontFamily = new FontFamily(monospaced ? "Cascadia Mono,Consolas" : "Segoe UI");
+        PreviewText.FontSize = monospaced ? 13.5 : 16;
+        PreviewText.ScrollToHome();
+        FileMetaText.Text += $"  •  {summary}";
+        ShowOnly(TextView);
+    }
+
+    private async Task LoadTechnicalAsync(string path, CancellationToken token)
+    {
+        var preview = await TechnicalPreviewService.LoadAsync(path, token);
+        token.ThrowIfCancellationRequested();
+        ShowTextContent(preview.Text, preview.Summary);
+    }
+
+    private async Task LoadTableAsync(string path, CancellationToken token)
+    {
+        var table = await TabularPreviewService.LoadAsync(path, token);
+        token.ThrowIfCancellationRequested();
+        var columns = new GridView { AllowsColumnReorder = false };
+        for (var index = 0; index < table.Columns.Count; index++)
+        {
+            columns.Columns.Add(new GridViewColumn
+            {
+                Header = table.Columns[index], Width = Math.Clamp(table.Columns[index].Length * 8 + 32, 150, 300),
+                DisplayMemberBinding = new System.Windows.Data.Binding($"[{index}]")
+            });
+        }
+        TableRowsList.View = columns;
+        TableRowsList.ItemsSource = table.Rows;
+        TableSummaryText.Text = table.Summary;
+        FileMetaText.Text += "  •  таблица";
+        ShowOnly(TableView);
+    }
+
+    private async Task RenderPdfPageAsync(CancellationToken cancellationToken)
+    {
+        var document = _nativePdf;
+        if (document is null) return;
+        var pageIndex = _pdfPageIndex;
+        PreviousPdfPageButton.IsEnabled = false;
+        NextPdfPageButton.IsEnabled = false;
+        var image = await document.RenderAsync(pageIndex, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!ReferenceEquals(_nativePdf, document) || _pdfPageIndex != pageIndex) return;
+        NativePdfImage.Source = image;
+        PdfPageText.Text = $"Страница {pageIndex + 1} из {document.PageCount}";
+        PreviousPdfPageButton.IsEnabled = pageIndex > 0;
+        NextPdfPageButton.IsEnabled = pageIndex + 1 < document.PageCount;
+        ShowOnly(NativePdfView);
+    }
+
+    private async void ChangePdfPage(int offset)
+    {
+        if (_nativePdf is null || _previewCancellation is null) return;
+        var next = (long)_pdfPageIndex + offset;
+        if (next < 0 || next >= _nativePdf.PageCount) return;
+        var token = _previewCancellation.Token;
+        _pdfPageIndex = (uint)next;
+        try { await RenderPdfPageAsync(token); }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) { if (!token.IsCancellationRequested) ShowError(exception.Message); }
+    }
+
+    private void PreviousPdfPageButton_Click(object sender, RoutedEventArgs e) => ChangePdfPage(-1);
+    private void NextPdfPageButton_Click(object sender, RoutedEventArgs e) => ChangePdfPage(1);
+
+    private async Task LoadArchiveAsync(string path, CancellationToken token)
+    {
+        var archive = await ArchivePreviewService.LoadAsync(path, token);
+        token.ThrowIfCancellationRequested();
+        ArchiveSummaryText.Text = archive.Error ?? archive.Summary;
+        ArchiveEntriesList.ItemsSource = archive.Entries.Select(entry => new
+        {
+            Name = (entry.IsDirectory ? "📁  " : "") + entry.Path + (entry.IsEncrypted ? "  🔒" : ""),
+            Size = entry.IsDirectory ? "—" : entry.Size is { } length ? FormatFileSize(length) : "—",
+            Modified = entry.Modified?.ToString("g") ?? "—"
+        }).ToArray();
+        FileMetaText.Text += "  •  содержимое архива";
+        ShowOnly(ArchiveView);
+    }
+
+    private async Task LoadOfficeAsync(string path, CancellationToken token)
+    {
+        var document = await OfficePreviewService.LoadAsync(path, token);
+        token.ThrowIfCancellationRequested();
+        ShowTextContent(document.Text, document.Summary);
     }
 
     private static string FormatJson(string text)
@@ -394,14 +801,9 @@ public partial class MainWindow : Window
 
     private static string FormatXml(string text)
     {
-        var settings = new XmlReaderSettings
-        {
-            DtdProcessing = DtdProcessing.Prohibit,
-            XmlResolver = null
-        };
         using var stringReader = new StringReader(text);
-        using var xmlReader = XmlReader.Create(stringReader, settings);
-        var document = XDocument.Load(xmlReader, LoadOptions.PreserveWhitespace);
+        var document = SafeXmlDocument.Load(stringReader, 2 * 1024 * 1024, CancellationToken.None,
+            LoadOptions.PreserveWhitespace, preserveMarkup: true);
         var declaration = document.Declaration?.ToString();
         var body = document.ToString(SaveOptions.None);
         return string.IsNullOrWhiteSpace(declaration)
@@ -409,83 +811,40 @@ public partial class MainWindow : Window
             : $"{declaration}{Environment.NewLine}{body}";
     }
 
-    private async Task LoadFolderPreviewAsync(string path)
+    private async Task LoadSystemPreviewAsync(string path, CancellationToken token)
     {
-        var summary = await Task.Run(() =>
+        var thumbnail = await Task.Run(() => ShellThumbnailService.TryGetThumbnail(path, 900, thumbnailOnly: true));
+        token.ThrowIfCancellationRequested();
+        if (!string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        if (thumbnail is null)
         {
-            var directory = new DirectoryInfo(path);
-            var entries = directory.EnumerateFileSystemInfos()
-                .OrderByDescending(entry => entry is DirectoryInfo)
-                .ThenBy(entry => entry.Name, NaturalStringComparer.Instance)
-                .Take(24)
-                .Select(entry => entry is DirectoryInfo
-                    ? $"📁  {entry.Name}"
-                    : $"     {entry.Name}   ·   {FormatFileSize(((FileInfo)entry).Length)}")
-                .ToList();
-            return entries.Count == 0 ? "Папка пуста" : string.Join(Environment.NewLine, entries);
-        });
-
-        if (!string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase))
+            await LoadTechnicalAsync(path, token);
             return;
-
-        InfoThumbnail.Source = ShellThumbnailService.TryGetThumbnail(path, 256);
-        InfoTitle.Text = new DirectoryInfo(path).Name;
-        InfoDetails.FontFamily = new System.Windows.Media.FontFamily("Cascadia Mono,Consolas");
-        InfoDetails.TextAlignment = TextAlignment.Left;
-        InfoDetails.Text = summary;
-        ShowOnly(InfoView);
-        FileMetaText.Text = "Папка";
-    }
-
-    private async Task LoadSystemPreviewAsync(string path)
-    {
-        var thumbnail = await Task.Run(() => ShellThumbnailService.TryGetThumbnail(path, 900));
-        if (!string.Equals(_currentPath, path, StringComparison.OrdinalIgnoreCase))
-            return;
+        }
 
         InfoThumbnail.Source = thumbnail;
-        InfoThumbnail.Width = thumbnail is null ? 96 : 520;
-        InfoThumbnail.Height = thumbnail is null ? 96 : 420;
+        InfoThumbnail.Width = 520;
+        InfoThumbnail.Height = 420;
         InfoTitle.Text = Path.GetFileName(path);
         InfoDetails.FontFamily = new System.Windows.Media.FontFamily("Segoe UI");
         InfoDetails.TextAlignment = TextAlignment.Center;
-        InfoDetails.Text = thumbnail is null
-            ? "Для этого формата Windows не предоставила эскиз. Нажмите Enter, чтобы открыть файл."
-            : "Системный эскиз • нажмите Enter, чтобы открыть файл полностью";
+        InfoDetails.Text = "Системный эскиз • нажмите Enter, чтобы открыть файл полностью";
         ShowOnly(InfoView);
     }
 
-    private void BuildNavigation(string path)
+    internal void Navigate(NavigationDirection direction)
     {
-        _navigationPaths.Clear();
-        _navigationIndex = -1;
-
-        try
+        if (ExplorerSelectionService.HasOriginWindow)
         {
-            var parent = Path.GetDirectoryName(path);
-            if (string.IsNullOrWhiteSpace(parent) || !Directory.Exists(parent))
-                return;
-
-            _navigationPaths.AddRange(Directory.EnumerateFiles(parent)
-                .OrderBy(file => Path.GetFileName(file), NaturalStringComparer.Instance));
-            _navigationIndex = _navigationPaths.FindIndex(file =>
-                string.Equals(file, path, StringComparison.OrdinalIgnoreCase));
-        }
-        catch (UnauthorizedAccessException)
-        {
-            _navigationPaths.Clear();
-            _navigationIndex = -1;
-        }
-        catch (IOException)
-        {
-            _navigationPaths.Clear();
-            _navigationIndex = -1;
+            var previous = _navigationTail;
+            _navigationTail = NavigateFromExplorerAsync(previous, direction, _navigationEpoch,
+                ExplorerSelectionService.OriginGeneration, new System.Windows.Interop.WindowInteropHelper(this).Handle);
+            return;
         }
 
-    }
-
-    private void Navigate(int offset)
-    {
+        var offset = direction is NavigationDirection.Left or NavigationDirection.Up ? -1 : 1;
         var nextIndex = _navigationIndex + offset;
         if (nextIndex < 0 || nextIndex >= _navigationPaths.Count)
             return;
@@ -494,105 +853,49 @@ public partial class MainWindow : Window
         _ = ShowPreviewAsync(_navigationPaths[_navigationIndex], rebuildNavigation: false);
     }
 
-    private static ushort ReadExifOrientation(BitmapFrame frame)
+    private async Task NavigateFromExplorerAsync(Task previous, NavigationDirection direction, int epoch,
+        int originGeneration, IntPtr previewWindow)
     {
         try
         {
-            if (frame.Metadata is BitmapMetadata metadata)
-            {
-                var value = metadata.GetQuery("/app1/ifd/{ushort=274}");
-                if (value is not null)
-                    return Convert.ToUInt16(value, CultureInfo.InvariantCulture);
-            }
+            try { await previous; } catch { }
+            if (!IsVisible || !IsActive || epoch != _navigationEpoch ||
+                originGeneration != ExplorerSelectionService.OriginGeneration ||
+                !GlobalKeyboardHook.CanHandlePreviewNavigation()) return;
+            // Accessibility providers can be slow. Keep their reads and Shell COM
+            // work off the UI thread so repeats, Escape and the hook stay responsive.
+            var selectedPath = await ExplorerStaWorker.RunAsync(() =>
+                ExplorerSelectionService.TryNavigateFromPreview(direction, previewWindow, originGeneration));
+            if (!IsVisible || epoch != _navigationEpoch || originGeneration != ExplorerSelectionService.OriginGeneration) return;
+            if (!string.IsNullOrWhiteSpace(selectedPath)) UpdatePreviewFromExplorer(selectedPath);
         }
-        catch (Exception exception) when (exception is NotSupportedException or InvalidOperationException or FormatException)
+        catch (Exception exception)
         {
-            // Damaged or non-standard EXIF should not prevent the image from opening.
+            Debug.WriteLine($"QuickPreview navigation: {exception.Message}");
         }
-
-        return 1;
     }
 
-    private static BitmapSource ApplyExifOrientation(BitmapSource source, ushort orientation)
+
+    private static async Task<bool> LooksLikeTextAsync(string path, long length, CancellationToken token)
     {
-        Transform? transform = orientation switch
-        {
-            2 => new ScaleTransform(-1, 1),
-            3 => new RotateTransform(180),
-            4 => new ScaleTransform(1, -1),
-            5 => CreateTransform(new ScaleTransform(-1, 1), new RotateTransform(270)),
-            6 => new RotateTransform(90),
-            7 => CreateTransform(new ScaleTransform(-1, 1), new RotateTransform(90)),
-            8 => new RotateTransform(270),
-            _ => null
-        };
-
-        return transform is null ? source : new TransformedBitmap(source, transform);
+        if (length == 0) return true;
+        var bytes = await BoundedFileReader.ReadAsync(path, 4096, token);
+        token.ThrowIfCancellationRequested();
+        return bytes.Length == 0 || FormatCatalog.LooksLikeText(bytes, endOfFile: bytes.Length == length);
     }
 
-    private static TransformGroup CreateTransform(params Transform[] transforms)
-    {
-        var group = new TransformGroup();
-        foreach (var transform in transforms)
-            group.Children.Add(transform);
-        return group;
-    }
+    private static string DecodeText(byte[] bytes) => FormatCatalog.DecodeText(bytes);
 
-    private static async Task<bool> LooksLikeTextAsync(string path)
-    {
-        var info = new FileInfo(path);
-        if (info.Length == 0)
-            return true;
-
-        var length = (int)Math.Min(info.Length, 4096);
-        var buffer = new byte[length];
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite,
-            4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        var read = await stream.ReadAsync(buffer.AsMemory());
-        if (read == 0) return true;
-
-        var suspicious = 0;
-        for (var index = 0; index < read; index++)
-        {
-            var value = buffer[index];
-            if (value == 0) return false;
-            if (value < 8 || (value > 13 && value < 32)) suspicious++;
-        }
-
-        return suspicious < read / 20;
-    }
-
-    private static string DecodeText(byte[] bytes)
-    {
-        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
-            return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
-        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
-            return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
-        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
-            return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
-
-        try
-        {
-            return new UTF8Encoding(false, true).GetString(bytes);
-        }
-        catch (DecoderFallbackException)
-        {
-            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
-            return Encoding.GetEncoding(1251).GetString(bytes);
-        }
-    }
-
-    private void PopulateHeader(string path)
+    private void PopulateHeader(string path, PreviewPathInfo info)
     {
         FileNameText.Text = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar));
-        if (Directory.Exists(path))
+        if (info.IsDirectory)
         {
             FileMetaText.Text = "Папка";
             return;
         }
 
-        var info = new FileInfo(path);
-        var type = string.IsNullOrEmpty(info.Extension) ? "Файл" : info.Extension.TrimStart('.').ToUpperInvariant();
+        var type = string.IsNullOrEmpty(Path.GetExtension(path)) ? "Файл" : Path.GetExtension(path).TrimStart('.').ToUpperInvariant();
         FileMetaText.Text = $"{type}  •  {FormatFileSize(info.Length)}  •  {info.LastWriteTime:g}";
     }
 
@@ -611,6 +914,14 @@ public partial class MainWindow : Window
 
     private void ResetViews()
     {
+        ResetBrowserLoadingState();
+        ResetRepresentations();
+        ShowOnly(LoadingView);
+        LoadingView.Opacity = 0;
+        DisposeModelPreview();
+        ReleaseSpreadsheetDocument();
+        if (!string.Equals(Path.GetExtension(_currentPath), ".pdf", StringComparison.OrdinalIgnoreCase)) ReleasePdfDocument();
+        else PdfWebView.CoreWebView2?.Stop();
         StopMedia();
         ResetAudioArtwork();
         PreviewImage.Source = null;
@@ -627,8 +938,13 @@ public partial class MainWindow : Window
         ImageScrollViewer.ScrollToHorizontalOffset(0);
         ImageScrollViewer.ScrollToVerticalOffset(0);
         PreviewText.Clear();
-        if (PdfWebView.CoreWebView2 is not null)
-            PdfWebView.CoreWebView2.Navigate("about:blank");
+        PreviewText.TextWrapping = TextWrapping.NoWrap;
+        PreviewText.FontFamily = new FontFamily("Cascadia Mono,Consolas");
+        PreviewText.FontSize = 13.5;
+        _nativePdf = null;
+        NativePdfImage.Source = null;
+        ArchiveEntriesList.ItemsSource = null;
+        TableRowsList.ItemsSource = null;
         InfoThumbnail.Source = null;
         InfoThumbnail.Width = 220;
         InfoThumbnail.Height = 220;
@@ -662,13 +978,13 @@ public partial class MainWindow : Window
 
     private void ShowOnly(UIElement visible)
     {
-        foreach (var view in new[] { LoadingView, ImageView, TextView, PdfView, VideoView, AudioView, InfoView, ErrorView })
-            view.Visibility = ReferenceEquals(view, visible) ? Visibility.Visible : Visibility.Collapsed;
+        _visualPreviewView = visible;
+        ApplyRepresentationVisibility();
     }
 
     private void ShowError(string message)
     {
-        ErrorText.Text = message;
+        ErrorText.Text = _hasSourcePreview ? message + "\n\nИсходное содержимое доступно на вкладке «Текст»." : message;
         ShowOnly(ErrorView);
     }
 
@@ -834,18 +1150,32 @@ public partial class MainWindow : Window
     private void OpenCurrent()
     {
         if (_currentPath is null) return;
-        Process.Start(new ProcessStartInfo(_currentPath) { UseShellExecute = true });
-        HidePreview();
+        TryShellAction(new ProcessStartInfo(_currentPath) { UseShellExecute = true }, "открыть файл");
     }
 
     private void RevealCurrent()
     {
         if (_currentPath is null) return;
-        if (Directory.Exists(_currentPath))
-            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{_currentPath}\"") { UseShellExecute = true });
+        if (_currentPathIsDirectory)
+            TryShellAction(new ProcessStartInfo("explorer.exe", $"\"{_currentPath}\"") { UseShellExecute = true }, "показать папку");
         else
-            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{_currentPath}\"") { UseShellExecute = true });
-        HidePreview();
+            TryShellAction(new ProcessStartInfo("explorer.exe", $"/select,\"{_currentPath}\"") { UseShellExecute = true }, "показать файл в папке");
+    }
+
+    private void TryShellAction(ProcessStartInfo startInfo, string action)
+    {
+        try
+        {
+            using var process = Process.Start(startInfo);
+            HidePreview();
+        }
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or
+            IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            StopMedia();
+            ShowError($"Не удалось {action}.\n{exception.Message}");
+            if (_hasSourcePreview) PreviewTabs.SelectedIndex = 0;
+        }
     }
 
     private void Window_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -855,14 +1185,15 @@ public partial class MainWindow : Window
             HidePreview();
             e.Handled = true;
         }
-        else if (e.Key == Key.Left)
+        else if ((e.Key is Key.Left or Key.Up or Key.Right or Key.Down) && GlobalKeyboardHook.CanHandlePreviewNavigation())
         {
-            Navigate(-1);
-            e.Handled = true;
-        }
-        else if (e.Key == Key.Right)
-        {
-            Navigate(1);
+            Navigate(e.Key switch
+            {
+                Key.Left => NavigationDirection.Left,
+                Key.Up => NavigationDirection.Up,
+                Key.Right => NavigationDirection.Right,
+                _ => NavigationDirection.Down
+            });
             e.Handled = true;
         }
         else if (e.Key == Key.Enter)
@@ -898,7 +1229,10 @@ public partial class MainWindow : Window
 
     private void Window_Deactivated(object? sender, EventArgs e)
     {
-        // Keep the preview open when clicking its media controls or taskbar button.
+        _navigationEpoch++;
+        ExplorerSelectionService.CancelPendingNavigation();
+        if (!Dispatcher.HasShutdownStarted)
+            Dispatcher.BeginInvoke(new Action(() => KeepAboveOriginExplorer()), DispatcherPriority.Input);
     }
 
     private void ActiveMedia_MediaOpened(object sender, RoutedEventArgs e)
@@ -1174,14 +1508,11 @@ public partial class MainWindow : Window
         HidePreview();
     }
 
-    private sealed class NaturalStringComparer : IComparer<string>
-    {
-        public static NaturalStringComparer Instance { get; } = new();
-        public int Compare(string? x, string? y) => StrCmpLogicalW(x ?? string.Empty, y ?? string.Empty);
-    }
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
 
-    [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
-    private static extern int StrCmpLogicalW(string first, string second);
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetWindow(IntPtr window, uint command);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]

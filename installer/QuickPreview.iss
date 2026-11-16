@@ -1,5 +1,5 @@
 #define MyAppName "QuickPreview"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.3.10"
 #define MyAppPublisher "QuickPreview"
 #define MyAppExeName "QuickPreview.exe"
 
@@ -35,7 +35,7 @@ VersionInfoProductVersion={#MyAppVersion}
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Files]
-Source: "payload\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "payload\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>3D-предпросмотр</title>
+  <link rel="stylesheet" href="viewer.css">
+  <script src="vendor/o3dv.min.js" defer></script>
+  <script src="viewer.js" defer></script>
+</head>
+<body>
+  <main>
+    <div class="toolbar" role="toolbar" aria-label="Управление моделью">
+      <div class="actions">
+        <button id="fit" type="button" disabled>Вписать</button>
+        <button id="edges" type="button" aria-pressed="false" disabled>Рёбра</button>
+      </div>
+      <span id="stats" aria-live="polite"></span>
+      <span class="hint">Вращение — мышью · масштаб — колесом</span>
+    </div>
+    <div id="viewport" role="img" aria-label="3D-модель. Перетаскивание вращает, колесо изменяет масштаб."></div>
+    <div id="status" role="status">Строим 3D-модель…</div>
+  </main>
+</body>
+</html>

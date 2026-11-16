@@ -9,6 +9,50 @@
         Foreground="{DynamicResource TextPrimaryBrush}"
         FontFamily="Segoe UI Variable Text,Segoe UI"
         PreviewKeyDown="Window_PreviewKeyDown" Deactivated="Window_Deactivated">
+  <Window.Resources>
+    <Style x:Key="PreviewTabStyle" TargetType="TabItem">
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+      <Setter Property="Width" Value="36" />
+      <Setter Property="Height" Value="32" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Cursor" Value="Hand" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="SnapsToDevicePixels" Value="True" />
+      <Setter Property="UseLayoutRounding" Value="True" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="TabItem">
+            <Border x:Name="TabChrome" Background="Transparent" BorderBrush="Transparent"
+                    BorderThickness="1" CornerRadius="7" Padding="{TemplateBinding Padding}">
+              <ContentPresenter ContentSource="Header"
+                                HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"
+                                RecognizesAccessKey="True" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                <Setter TargetName="TabChrome" Property="Background" Value="{DynamicResource CardBackgroundBrush}" />
+                <Setter TargetName="TabChrome" Property="BorderBrush" Value="{DynamicResource ControlStrokeBrush}" />
+              </Trigger>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="TabChrome" Property="Background" Value="{DynamicResource ControlHoverBrush}" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <Setter TargetName="TabChrome" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Cursor" Value="Arrow" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </Window.Resources>
   <WindowChrome.WindowChrome>
     <WindowChrome CaptionHeight="58" CornerRadius="14" GlassFrameThickness="0"
                   ResizeBorderThickness="7" UseAeroCaptionButtons="False" />
@@ -29,21 +73,70 @@
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="Auto" />
           </Grid.ColumnDefinitions>
-          <StackPanel VerticalAlignment="Center">
+          <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
             <TextBlock x:Name="FileNameText" FontSize="14" FontWeight="SemiBold"
                        Foreground="{DynamicResource TextPrimaryBrush}" TextTrimming="CharacterEllipsis" />
             <TextBlock x:Name="FileMetaText" FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
                        Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
           </StackPanel>
-          <Button Grid.Column="1" Style="{StaticResource IconButtonStyle}" Content="&#xE711;"
-                  ToolTip="Закрыть (Esc)" Click="CloseButton_Click"
-                  WindowChrome.IsHitTestVisibleInChrome="True" />
+          <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
+                      WindowChrome.IsHitTestVisibleInChrome="True">
+            <Border x:Name="RepresentationBar" Height="40" Padding="3" Margin="0,0,8,0"
+                    IsEnabled="False" CornerRadius="10" BorderThickness="1"
+                    Background="{DynamicResource ControlFillBrush}"
+                    BorderBrush="{DynamicResource ControlStrokeBrush}"
+                    ToolTipService.ShowOnDisabled="True"
+                    WindowChrome.IsHitTestVisibleInChrome="True">
+              <Border.Style>
+                <Style TargetType="Border">
+                  <Setter Property="ToolTip" Value="Визуал / текст" />
+                  <Style.Triggers>
+                    <Trigger Property="IsEnabled" Value="False">
+                      <Setter Property="Opacity" Value="0.4" />
+                      <Setter Property="ToolTip" Value="Для этого файла доступно одно представление" />
+                    </Trigger>
+                  </Style.Triggers>
+                </Style>
+              </Border.Style>
+              <TabControl x:Name="PreviewTabs" SelectedIndex="0" Background="Transparent" BorderThickness="0"
+                          ItemContainerStyle="{StaticResource PreviewTabStyle}"
+                          SelectionChanged="PreviewTabs_SelectionChanged" AutomationProperties.Name="Представление файла">
+                <TabControl.Template>
+                  <ControlTemplate TargetType="TabControl">
+                    <StackPanel IsItemsHost="True" Orientation="Horizontal" KeyboardNavigation.TabNavigation="Once" />
+                  </ControlTemplate>
+                </TabControl.Template>
+                <TabItem x:Name="VisualPreviewTab" ToolTip="Визуал" AutomationProperties.Name="Визуал">
+                  <TabItem.Header>
+                    <Grid Width="16" Height="16" IsHitTestVisible="False">
+                      <Path Data="M1,8 C4,2.5 12,2.5 15,8 C12,13.5 4,13.5 1,8 Z M10,8 A2,2 0 1 1 6,8 A2,2 0 1 1 10,8"
+                            Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=TabItem}}"
+                            StrokeThickness="1.5" StrokeLineJoin="Round" />
+                    </Grid>
+                  </TabItem.Header>
+                </TabItem>
+                <TabItem x:Name="SourcePreviewTab" ToolTip="Текст" AutomationProperties.Name="Текст">
+                  <TabItem.Header>
+                    <Grid Width="16" Height="16" IsHitTestVisible="False">
+                      <Path Data="M3,3.5 L13,3.5 M3,6.5 L13,6.5 M3,9.5 L13,9.5 M3,12.5 L10,12.5"
+                            Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=TabItem}}"
+                            StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                    </Grid>
+                  </TabItem.Header>
+                </TabItem>
+              </TabControl>
+            </Border>
+            <Button x:Name="ClosePreviewButton" Style="{StaticResource IconButtonStyle}" Content="&#xE711;"
+                    ToolTip="Закрыть (Esc)" Click="CloseButton_Click"
+                    WindowChrome.IsHitTestVisibleInChrome="True" />
+          </StackPanel>
         </Grid>
       </Border>
 
       <Border Grid.Row="1" Background="{DynamicResource PreviewBackgroundBrush}"
               BorderBrush="{DynamicResource CardBorderBrush}" BorderThickness="0,1" ClipToBounds="True">
         <Grid>
+          <Grid>
           <Grid x:Name="LoadingView">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
               <TextBlock Text="◌" FontSize="46" HorizontalAlignment="Center"
@@ -101,8 +194,131 @@
                      TextWrapping="NoWrap" AcceptsReturn="True" />
           </Grid>
 
+          <Grid x:Name="SourceView" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="SourceStatusText" Margin="28,12,28,8" FontSize="12" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextSecondaryBrush}" />
+            <TextBox x:Name="SourcePreviewText" Grid.Row="1" IsReadOnly="True" BorderThickness="0"
+                     Background="{DynamicResource CardBackgroundBrush}" Foreground="{DynamicResource TextPrimaryBrush}"
+                     Padding="28,16" FontFamily="Cascadia Mono,Consolas" FontSize="13.5"
+                     HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                     TextWrapping="NoWrap" AcceptsReturn="True" AutomationProperties.Name="Исходный текст файла" />
+          </Grid>
+
           <Grid x:Name="PdfView" Visibility="Collapsed" Background="#F3F3F3">
             <wv2:WebView2 x:Name="PdfWebView" />
+          </Grid>
+
+          <Grid x:Name="ModelView" Visibility="Collapsed">
+            <wv2:WebView2 x:Name="ModelWebView" />
+          </Grid>
+
+          <Grid x:Name="TableView" Visibility="Collapsed" Margin="20,16">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="TableSummaryText" Margin="0,0,0,12" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextSecondaryBrush}" />
+            <ListView x:Name="TableRowsList" Grid.Row="1" BorderThickness="0"
+                      Background="{DynamicResource CardBackgroundBrush}" Foreground="{DynamicResource TextPrimaryBrush}"
+                      ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+              <ListView.Resources>
+                <Style TargetType="GridViewColumnHeader">
+                  <Setter Property="Background" Value="{DynamicResource HeaderBackgroundBrush}" />
+                  <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                  <Setter Property="Padding" Value="6,8" />
+                  <Setter Property="HorizontalContentAlignment" Value="Left" />
+                </Style>
+                <Style TargetType="ListViewItem">
+                  <Setter Property="Padding" Value="8,5" />
+                  <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                </Style>
+              </ListView.Resources>
+            </ListView>
+          </Grid>
+
+          <Grid x:Name="SpreadsheetView" Visibility="Collapsed">
+            <wv2:WebView2 x:Name="SpreadsheetWebView" />
+          </Grid>
+
+          <Grid x:Name="FontView" Visibility="Collapsed">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+              <StackPanel Margin="28,24">
+                <TextBlock x:Name="FontNameText" FontSize="24" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <TextBlock x:Name="FontDetailsText" Margin="0,6,0,28" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                <StackPanel x:Name="FontSamplesPanel">
+                  <TextBlock FontSize="52" Text="Aa Бб 123" TextWrapping="Wrap" Margin="0,0,0,24" />
+                  <TextBlock FontSize="24" Text="Съешь ещё этих мягких французских булок, да выпей чаю."
+                             TextWrapping="Wrap" Margin="0,0,0,20" />
+                  <TextBlock FontSize="24" Text="The quick brown fox jumps over the lazy dog."
+                             TextWrapping="Wrap" Margin="0,0,0,20" />
+                  <TextBlock FontSize="18" Text="АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ&#x0A;абвгдеёжзийклмнопрстуфхцчшщъыьэюя&#x0A;ABCDEFGHIJKLMNOPQRSTUVWXYZ&#x0A;abcdefghijklmnopqrstuvwxyz&#x0A;0123456789 !? @#% &amp; () [] {} +−= /"
+                             TextWrapping="Wrap" LineHeight="28" />
+                </StackPanel>
+              </StackPanel>
+            </ScrollViewer>
+          </Grid>
+
+          <Grid x:Name="NativePdfView" Visibility="Collapsed">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Border Padding="16,8" Background="{DynamicResource HeaderBackgroundBrush}">
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <Button x:Name="PreviousPdfPageButton" Content="←" Width="44" Height="32" Padding="0"
+                        ToolTip="Предыдущая страница" Click="PreviousPdfPageButton_Click" />
+                <TextBlock x:Name="PdfPageText" MinWidth="150" TextAlignment="Center"
+                           VerticalAlignment="Center" Margin="12,0" />
+                <Button x:Name="NextPdfPageButton" Content="→" Width="44" Height="32" Padding="0"
+                        ToolTip="Следующая страница" Click="NextPdfPageButton_Click" />
+              </StackPanel>
+            </Border>
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                          HorizontalContentAlignment="Center" Padding="18">
+              <Image x:Name="NativePdfImage" Stretch="Uniform" VerticalAlignment="Top" />
+            </ScrollViewer>
+          </Grid>
+
+          <Grid x:Name="ArchiveView" Visibility="Collapsed" Margin="20,16">
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="ArchiveSummaryText" Margin="0,0,0,12" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextSecondaryBrush}" />
+            <ListView x:Name="ArchiveEntriesList" Grid.Row="1" BorderThickness="0"
+                      Background="{DynamicResource CardBackgroundBrush}"
+                      Foreground="{DynamicResource TextPrimaryBrush}"
+                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                      ScrollViewer.VerticalScrollBarVisibility="Auto"
+                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+              <ListView.Resources>
+                <Style TargetType="GridViewColumnHeader">
+                  <Setter Property="Background" Value="{DynamicResource HeaderBackgroundBrush}" />
+                  <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                  <Setter Property="Padding" Value="6,8" />
+                  <Setter Property="HorizontalContentAlignment" Value="Left" />
+                </Style>
+                <Style TargetType="ListViewItem">
+                  <Setter Property="Padding" Value="8,5" />
+                  <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                </Style>
+              </ListView.Resources>
+              <ListView.View>
+                <GridView AllowsColumnReorder="False">
+                  <GridViewColumn Header="Имя / путь в архиве" Width="540" DisplayMemberBinding="{Binding Name}" />
+                  <GridViewColumn Header="Размер" Width="110" DisplayMemberBinding="{Binding Size}" />
+                  <GridViewColumn Header="Изменён" Width="160" DisplayMemberBinding="{Binding Modified}" />
+                </GridView>
+              </ListView.View>
+            </ListView>
           </Grid>
 
           <Grid x:Name="VideoView" Visibility="Collapsed" Background="#050506">
@@ -254,6 +470,7 @@
             </StackPanel>
           </Grid>
 
+          </Grid>
         </Grid>
       </Border>
 
@@ -265,7 +482,7 @@
             <ColumnDefinition Width="Auto" />
           </Grid.ColumnDefinitions>
           <Button Content="Открыть" Click="OpenButton_Click" VerticalAlignment="Center" />
-          <TextBlock Grid.Column="1" Text="←/→ файлы  ·  Space/Esc закрыть"
+          <TextBlock Grid.Column="1" Text="↑/↓/←/→ файлы  ·  Space/Esc закрыть"
                      Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center"
                      HorizontalAlignment="Stretch" TextAlignment="Center" TextTrimming="CharacterEllipsis"
                      Margin="12,0" FontSize="12" />
